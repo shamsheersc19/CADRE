@@ -7,7 +7,7 @@ import numpy as np
 from openmdao.core.component import Component
 
 from CADRE.kinematics import fixangles
-from MBI import MBI
+import InterpolationLibrary
 
 # Allow non-standard variable names for scientific calc
 # pylint: disable-msg=C0103
@@ -63,6 +63,12 @@ class Solar_ExposedArea(Component):
         azimuth = np.zeros(self.nz)
         elevation = np.zeros(self.ne)
 
+        xlimits = np.array([
+            [0.0, np.pi/2.0],
+            [0., np.pi*2.0],
+            [0, np.pi]
+        ])
+
         index = 0
         for i in range(self.na):
             angle[i] = raw1[index]
@@ -84,20 +90,37 @@ class Solar_ExposedArea(Component):
         elevation[0] = 0.0
         elevation[-1] = np.pi
 
+        xt = np.zeros((self.na * self.nz * self.ne, 3))
+
         counter = 0
-        data = np.zeros((self.na, self.nz, self.ne, self.np * self.nc))
+
+        for a in range(self.na):
+            for z in range(self.nz):
+                for e in range(self.ne):
+                    xt[counter, 0] = angle[a]
+                    xt[counter, 1] = azimuth[z]
+                    xt[counter, 2] = elevation[e]
+                    counter += 1
+
+        counter=0
+
+        yt = np.zeros((self.na * self.nz * self.ne , self.np * self.nc))
         flat_size = self.na * self.nz * self.ne
         for p in range(self.np):
             for c in range(self.nc):
-                data[:, :, :, counter] = \
-                    raw2[7 * p + c][119:119 + flat_size].reshape((self.na,
-                                                                  self.nz,
-                                                                  self.ne))
+                yt[:, counter] = raw2[7 * p + c][119:119 + flat_size].reshape(flat_size)
                 counter += 1
 
-        self.MBI = MBI(data, [angle, azimuth, elevation],
-                             [4, 10, 8],
-                             [4, 4, 4])
+        self.MIME = InterpolationLibrary.EMTPS({
+            'xlimits': xlimits,
+            'num elems': [5, 5, 5],
+            'wt fit': 1e5
+        }, {
+        }, {
+        })
+
+        self.MIME.add_training_pts('approx', xt, yt)
+        self.MIME.setup()
 
         self.x = np.zeros((self.n, 3))
         self.Jfin = None
@@ -108,7 +131,7 @@ class Solar_ExposedArea(Component):
         """ Calculate output. """
 
         self.setx(params)
-        P = self.MBI.evaluate(self.x).T
+        P = self.MIME.evaluate(self.x).T
         unknowns['exposedArea'] = P.reshape(7, 12, self.n, order='F')
 
     def setx(self, params):
@@ -122,11 +145,11 @@ class Solar_ExposedArea(Component):
     def jacobian(self, params, unknowns, resids):
         """ Calculate and save derivatives. (i.e., Jacobian) """
 
-        self.Jfin = self.MBI.evaluate(self.x, 1).reshape(self.n, 7, 12,
+        self.Jfin = self.MIME.evaluate(self.x, 0).reshape(self.n, 7, 12,
                                                          order='F')
-        self.Jaz = self.MBI.evaluate(self.x, 2).reshape(self.n, 7, 12,
+        self.Jaz = self.MIME.evaluate(self.x, 1).reshape(self.n, 7, 12,
                                                         order='F')
-        self.Jel = self.MBI.evaluate(self.x, 3).reshape(self.n, 7, 12,
+        self.Jel = self.MIME.evaluate(self.x, 2).reshape(self.n, 7, 12,
                                                         order='F')
 
     def apply_linear(self, params, unknowns, dparams, dunknowns, dresids, mode):

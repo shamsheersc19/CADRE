@@ -5,7 +5,6 @@ from six.moves import range
 
 import numpy as np
 import scipy.sparse
-import MBI
 
 from openmdao.core.component import Component
 
@@ -14,6 +13,8 @@ from CADRE.kinematics import fixangles, computepositionspherical, \
     computepositionrotdjacobian
 
 import rk4
+
+import InterpolationLibrary
 
 # Allow non-standard variable names for scientific calc
 # pylint: disable-msg=C0103
@@ -215,22 +216,21 @@ class Comm_AntRotationMtx(Component):
     def apply_linear(self, params, unknowns, dparams, dunknowns, dresids, mode):
         """ Matrix-vector product with the Jacobian. """
 
-        dq_A = dparams['q_A']
-        dO_AB = dresids['O_AB']
-
         if mode == 'fwd':
             for u in range(3):
                 for v in range(3):
                     for k in range(4):
-                        dO_AB[u, v, :] += \
-                            self.J[:, u, v, k] * dq_A[k, :]
+                        dresids['O_AB'][u, v, :] += \
+                            self.J[:, u, v, k] * dparams['q_A'][k, :]
 
         else:
             for u in range(3):
                 for v in range(3):
                     for k in range(4):
+                        dq_A = np.zeros(dparams['q_A'].shape)
                         dq_A[k, :] += self.J[:, u, v, k] * \
-                            dO_AB[u, v, :]
+                            dresids['O_AB'][u, v, :]
+                        dparams['q_A'] = dq_A
 
 
 class Comm_BitRate(Component):
@@ -389,7 +389,9 @@ class Comm_Distance(Component):
 
         else:
             for k in range(3):
-                dparams['r_b2g_A'][k, :] += self.J[:, k] * dresids['GSdist']
+                dr_b2g_A = np.zeros(dparams['r_b2g_A'].shape)
+                dr_b2g_A[k, :] += self.J[:, k] * dresids['GSdist']
+                dparams['r_b2g_A'] = dr_b2g_A
 
 
 class Comm_EarthsSpin(Component):
@@ -557,22 +559,23 @@ class Comm_EarthsSpinMtx(Component):
         """ Matrix-vector product with the Jacobian. """
 
         dO_IE = dresids['O_IE']
-        dq_E = dparams['q_E']
 
         if mode == 'fwd':
             for u in range(3):
                 for v in range(3):
                     for k in range(4):
                         dO_IE[u, v, :] += self.J[:, u, v, k] * \
-                            dq_E[k, :]
+                            dparams['q_E'][k, :]
 
 
         else:
             for u in range(3):
                 for v in range(3):
                     for k in range(4):
+                        dq_E = np.zeros(dparams['q_E'].shape)
                         dq_E[k, :] += self.J[:, u, v, k] * \
                             dO_IE[u, v, :]
+                        dparams['q_E'] = dq_E
 
 class Comm_GainPattern(Component):
     ''' Determines transmitter gain based on an external az-el map. '''
@@ -585,7 +588,8 @@ class Comm_GainPattern(Component):
         if rawG is None:
             fpath = os.path.dirname(os.path.realpath(__file__))
             rawGdata = np.genfromtxt(fpath + '/data/Comm/Gain.txt')
-            rawG = (10 ** (rawGdata / 10.0)).reshape((361, 361), order='F')
+            yt = (10 ** (rawGdata / 10.0)).reshape((361, 361), order='F')\
+                .reshape(361 * 361 , 1)
 
         # Inputs
         self.add_param('azimuthGS', np.zeros(n), units="rad",
@@ -605,7 +609,30 @@ class Comm_GainPattern(Component):
         az = np.linspace(0, 2 * pi, 361)
         el = np.linspace(0, 2 * pi, 361)
 
-        self.MBI = MBI.MBI(rawG, [az, el], [15, 15], [4, 4])
+        xlimits = np.array([
+            [0, 2 * pi],
+            [0, 2 * pi]
+        ])
+
+        xt = np.zeros((361 * 361 , 2))
+
+        counter = 0
+        for a in range(361):
+            for e in range(361):
+                xt[counter , 0] = az[a]
+                xt[counter , 1] = el[e]
+                counter += 1
+
+        self.MIME = InterpolationLibrary.EMTPS({
+            'xlimits': xlimits,
+            'num elems': [50, 50],
+            'wt fit':1e5
+        }, {
+        }, {
+        })
+        self.MIME.add_training_pts('approx', xt, yt)
+        self.MIME.setup()
+
         self.x = np.zeros((self.n, 2), order='F')
 
     def solve_nonlinear(self, params, unknowns, resids):
@@ -614,13 +641,13 @@ class Comm_GainPattern(Component):
         result = fixangles(self.n, params['azimuthGS'], params['elevationGS'])
         self.x[:, 0] = result[0]
         self.x[:, 1] = result[1]
-        unknowns['gain'] = self.MBI.evaluate(self.x)[:, 0]
+        unknowns['gain'] = self.MIME.evaluate(self.x)[:, 0]
 
     def jacobian(self, params, unknowns, resids):
         """ Calculate and save derivatives. (i.e., Jacobian) """
 
-        self.dg_daz = self.MBI.evaluate(self.x, 1)[:, 0]
-        self.dg_del = self.MBI.evaluate(self.x, 2)[:, 0]
+        self.dg_daz = self.MIME.evaluate(self.x, 0)[:, 0]
+        self.dg_del = self.MIME.evaluate(self.x, 1)[:, 0]
 
     def apply_linear(self, params, unknowns, dparams, dunknowns, dresids, mode):
         """ Matrix-vector product with the Jacobian. """
@@ -806,12 +833,16 @@ class Comm_GSposECI(Component):
                 if 'O_IE' in dparams:
                     for u in range(3):
                         for v in range(3):
-                            dparams['O_IE'][u, v, :] += self.J1[:, k, u, v] * \
+                            dO_IE = np.zeros(dparams['O_IE'].shape)
+                            dO_IE[u, v, :] += self.J1[:, k, u, v] * \
                                 dr_e2g_I[k, :]
+                            dparams['O_IE'] = dO_IE
                 if 'r_e2g_E' in dparams:
                     for j in range(3):
-                        dparams['r_e2g_E'][j, :] += self.J2[:, k, j] * \
+                        dr_e2g_E = np.zeros(dparams['r_e2g_E'].shape)
+                        dr_e2g_E[j, :] += self.J2[:, k, j] * \
                             dr_e2g_I[k, :]
+                        dparams['r_e2g_E'] = dr_e2g_E
 
 
 class Comm_LOS(Component):
@@ -903,9 +934,13 @@ class Comm_LOS(Component):
         else:
             for k in range(3):
                 if 'r_b2g_I' in dparams:
-                    dparams['r_b2g_I'][k, :] += self.dLOS_drb[:, k] * dCommLOS
+                    dr_b2g_I = np.zeros(dparams['r_b2g_I'].shape)
+                    dr_b2g_I[k, :] += self.dLOS_drb[:, k] * dCommLOS
+                    dparams['r_b2g_I'] = dr_b2g_I
                 if 'r_e2g_I' in dparams:
-                    dparams['r_e2g_I'][k, :] += self.dLOS_dre[:, k] * dCommLOS
+                    dr_e2g_I = np.zeros(dparams['r_e2g_I'].shape)
+                    dr_e2g_I[k, :] += self.dLOS_dre[:, k] * dCommLOS
+                    dparams['r_e2g_I'] = dr_e2g_I
 
 
 class Comm_VectorAnt(Component):
@@ -965,12 +1000,16 @@ class Comm_VectorAnt(Component):
                 if 'O_AB' in dparams:
                     for u in range(3):
                         for v in range(3):
-                            dparams['O_AB'][u, v, :] += self.J1[:, k, u, v] * \
+                            dO_AB = np.zeros(dparams['O_AB'].shape)
+                            dO_AB[u, v, :] += self.J1[:, k, u, v] * \
                                 dr_b2g_A[k, :]
+                            dparams['O_AB'] = dO_AB
                 if 'r_b2g_B' in dparams:
                     for j in range(3):
-                        dparams['r_b2g_B'][j, :] += self.J2[:, k, j] * \
+                        dr_b2g_B = np.zeros(dparams['r_b2g_B'].shape)
+                        dr_b2g_B[j, :] += self.J2[:, k, j] * \
                             dr_b2g_A[k, :]
+                        dparams['r_b2g_B'] = dr_b2g_B
 
 
 class Comm_VectorBody(Component):
@@ -1041,12 +1080,16 @@ class Comm_VectorBody(Component):
                 if 'O_BI' in dparams:
                     for u in range(3):
                         for v in range(3):
-                            dparams['O_BI'][u, v, :] += self.J1[:, k, u, v] * \
+                            dO_BI = np.zeros(dparams['O_BI'].shape)
+                            dO_BI[u, v, :] += self.J1[:, k, u, v] * \
                                 dr_b2g_B[k, :]
+                            dparams['O_BI'] = dO_BI
                 if 'r_b2g_I' in dparams:
                     for j in range(3):
-                        dparams['r_b2g_I'][j, :] += self.J2[:, k, j] * \
+                        dr_b2g_I = np.zeros(dparams['r_b2g_I'].shape)
+                        dr_b2g_I[j, :] += self.J2[:, k, j] * \
                             dr_b2g_B[k, :]
+                        dparams['r_b2g_I'] = dr_b2g_I
 
 
 class Comm_VectorECI(Component):
@@ -1093,7 +1136,7 @@ class Comm_VectorECI(Component):
             if 'r_e2b_I' in dparams:
                 dr_e2b_I = np.zeros(dparams['r_e2b_I'].shape)
                 dr_e2b_I[:3, :] += -dr_b2g_I
-                dparams['r_e2b_I'] += dr_e2b_I
+                dparams['r_e2b_I'] = dr_e2b_I
 
 
 class Comm_VectorSpherical(Component):

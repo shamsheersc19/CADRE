@@ -7,7 +7,7 @@ import numpy as np
 
 from openmdao.core.component import Component
 
-import MBI
+import InterpolationLibrary
 
 # Allow non-standard variable names for scientific calc
 # pylint: disable-msg=C0103
@@ -47,9 +47,35 @@ class Power_CellVoltage(Component):
         T = dat[3:3 + nT]
         A = dat[3 + nT:3 + nT + nA]
         I = dat[3 + nT + nA:3 + nT + nA + nI]
-        V = dat[3 + nT + nA + nI:].reshape((nT, nA, nI), order='F')
 
-        self.MBI = MBI.MBI(V, [T, A, I], [6, 6, 15], [3, 3, 3])
+        xlimits = np.array([
+            [49.0, 410.0],
+            [-0.002, 0.005],
+            [-0.001, 0.475]
+        ])
+
+        counter = 0
+        for t in range(int(nT)):
+                for a in range(int(nA)):
+                        for i in range(int(nI)):
+                            xt[counter , 0] = T[t]
+                            xt[counter , 1] = A[a]
+                            xt[counter , 2] = I[i]
+                            counter += 1
+
+        yt = np.zeros((nT * nA * nI , 3))
+
+        yt = dat[3 + nT + nA + nI:].reshape((nT, nA, nI), order='F').reshape(nT * nA * nI , 1)
+
+        self.MIME = InterpolationLibrary.EMTPS({
+            'xlimits': xlimits,
+            'num elems': [4, 15, 4],
+            'wt fit': 1e9
+        }, {
+        }, {
+        })
+        self.MIME.add_training_pts('approx', xt, yt)
+        self.MIME.setup()
 
         self.x = np.zeros((84 * self.n, 3), order='F')
         self.xV = self.x.reshape((self.n, 7, 12, 3), order='F')
@@ -76,7 +102,7 @@ class Power_CellVoltage(Component):
         """ Calculate output. """
 
         self.setx(params)
-        self.raw = self.MBI.evaluate(self.x)[:, 0].reshape((self.n, 7, 12),
+        self.raw = self.MIME.evaluate(self.x)[:, 0].reshape((self.n, 7, 12),
                                                            order='F')
         unknowns['V_sol'] = np.zeros((12, self.n))
         for c in range(7):
@@ -88,11 +114,11 @@ class Power_CellVoltage(Component):
         exposedArea = params['exposedArea']
         LOS = params['LOS']
 
-        self.raw1 = self.MBI.evaluate(self.x, 1)[:, 0].reshape((self.n, 7,
+        self.raw1 = self.MIME.evaluate(self.x, 0)[:, 0].reshape((self.n, 7,
                                                                 12), order='F')
-        self.raw2 = self.MBI.evaluate(self.x, 2)[:, 0].reshape((self.n, 7,
+        self.raw2 = self.MIME.evaluate(self.x, 1)[:, 0].reshape((self.n, 7,
                                                                 12), order='F')
-        self.raw3 = self.MBI.evaluate(self.x, 3)[:, 0].reshape((self.n, 7,
+        self.raw3 = self.MIME.evaluate(self.x, 2)[:, 0].reshape((self.n, 7,
                                                                 12), order='F')
         self.dV_dL[:] = 0.0
         self.dV_dT[:] = 0.0
@@ -138,15 +164,20 @@ class Power_CellVoltage(Component):
                     dparams['LOS'] += self.dV_dL[:, p] * dV_sol[p,:]
 
                 if 'temperature' in dparams:
-                    dparams['temperature'][i,:] += self.dV_dT[:, p, i] * dV_sol[p,:]
+                    dtemp = np.zeros(dparams['temperature'].shape)
+                    dtemp[i,:] += self.dV_dT[:, p, i] * dV_sol[p,:]
+                    dparams['temperature'] = dtemp
 
                 if 'Isetpt' in dparams:
-                    dparams['Isetpt'][p,:] += self.dV_dI[:, p] * dV_sol[p,:]
+                    dIsetpt = np.zeros(dparams['Isetpt'].shape)
+                    dIsetpt[p,:] += self.dV_dI[:, p] * dV_sol[p,:]
+                    dparams['Isetpt'] = dIsetpt
 
                 if 'exposedArea' in dparams:
-                    dexposedArea = dparams['exposedArea']
                     for c in range(7):
+                        dexposedArea = np.zeros(dparams['exposedArea'].shape)
                         dexposedArea[c, p, :] += self.dV_dA[:, c, p] * dV_sol[p,:]
+                        dparams['exposedArea'] = dexposedArea
 
 
 class Power_SolarPower(Component):
@@ -195,10 +226,14 @@ class Power_SolarPower(Component):
         else:
             for p in range(12):
                 if 'V_sol' in dparams:
-                    dparams['V_sol'][p,:] += dP_sol* params['Isetpt'][p, :]
+                    dV_sol = np.zeros(dparams['V_sol'].shape)
+                    dV_sol[p,:] += dP_sol* params['Isetpt'][p, :]
+                    dparams['V_sol'] = dV_sol
 
                 if 'Isetpt' in dparams:
-                    dparams['Isetpt'][p,:] += params['V_sol'][p, :] * dP_sol
+                    dIsetpt = np.zeros(dparams['Isetpt'].shape)
+                    dIsetpt[p,:] += params['V_sol'][p, :] * dP_sol
+                    dparams['Isetpt'] = dIsetpt
 
 
 class Power_Total(Component):
@@ -258,4 +293,6 @@ class Power_Total(Component):
 
             if 'P_RW' in dparams:
                 for k in range(3):
-                    dparams['P_RW'][k, :] -= dP_bat
+                    dP_RW = np.zeros(dparams['P_RW'].shape)
+                    dP_RW[k, :] -= dP_bat
+                    dparams['P_RW'] = dP_RW
