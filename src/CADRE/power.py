@@ -54,6 +54,8 @@ class Power_CellVoltage(Component):
             [-0.001, 0.475]
         ])
 
+	xt = np.zeros((nT * nA * nI , 3))
+
         counter = 0
         for t in range(int(nT)):
                 for a in range(int(nA)):

@@ -584,12 +584,14 @@ class Comm_GainPattern(Component):
         super(Comm_GainPattern, self).__init__()
 
         self.n = n
-
+        print rawG
         if rawG is None:
             fpath = os.path.dirname(os.path.realpath(__file__))
             rawGdata = np.genfromtxt(fpath + '/data/Comm/Gain.txt')
-            yt = (10 ** (rawGdata / 10.0)).reshape((361, 361), order='F')\
-                .reshape(361 * 361 , 1)
+	    yt = (10 ** (rawGdata / 10.0)).reshape((361, 361), order='F')\
+             .reshape(361 * 361 , 1)
+        else: 
+ 	    yt = rawG.reshape(361 * 361 , 1)
 
         # Inputs
         self.add_param('azimuthGS', np.zeros(n), units="rad",
