@@ -615,7 +615,9 @@ class Comm_GainPattern(Component):
         self.x[:, 0] = result[0]
         self.x[:, 1] = result[1]
         unknowns['gain'] = self.MBI.evaluate(self.x)[:, 0]
-
+        np.savetxt(open("comm_x","w") , self.x)
+        np.savetxt(open("comm_gain","w") , unknowns['gain'])
+        
     def jacobian(self, params, unknowns, resids):
         """ Calculate and save derivatives. (i.e., Jacobian) """
 

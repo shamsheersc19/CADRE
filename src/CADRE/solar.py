@@ -109,6 +109,8 @@ class Solar_ExposedArea(Component):
 
         self.setx(params)
         P = self.MBI.evaluate(self.x).T
+        np.savetxt(open("solar_x","w") , self.x)
+        np.savetxt(open("solar_P","w") , P)
         unknowns['exposedArea'] = P.reshape(7, 12, self.n, order='F')
 
     def setx(self, params):
