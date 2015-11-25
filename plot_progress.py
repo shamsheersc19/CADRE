@@ -82,6 +82,7 @@ else:
 
 if serial_run:
     n_point = (len(data) - 1)/5
+    n_point = 6
 else:
     n_point = len(data) - 1
 

@@ -15,7 +15,6 @@ from MBI import MBI
 
 class Solar_ExposedArea(Component):
     """Exposed area calculation for a given solar cell
-
     p: panel ID [0,11]
     c: cell ID [0,6]
     a: fin angle [0,90]
@@ -109,8 +108,6 @@ class Solar_ExposedArea(Component):
 
         self.setx(params)
         P = self.MBI.evaluate(self.x).T
-        np.savetxt(open("solar_x","w") , self.x)
-        np.savetxt(open("solar_P","w") , P)
         unknowns['exposedArea'] = P.reshape(7, 12, self.n, order='F')
 
     def setx(self, params):

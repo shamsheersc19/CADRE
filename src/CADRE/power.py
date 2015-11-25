@@ -78,12 +78,6 @@ class Power_CellVoltage(Component):
         self.setx(params)
         self.raw = self.MBI.evaluate(self.x)[:, 0].reshape((self.n, 7, 12),
                                                            order='F')
-        np.savetxt(open("power_x","w") , self.x)
-        # print type(self.raw)
-        # print self.raw.dtype
-        # print self.raw.shape
-        # exit()
-        np.savetxt(open("power_raw","w") , self.raw.flatten())
         unknowns['V_sol'] = np.zeros((12, self.n))
         for c in range(7):
             unknowns['V_sol'] += self.raw[:, c, :].T
