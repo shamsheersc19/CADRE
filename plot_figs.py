@@ -7,21 +7,39 @@ import numpy as np
 from matplotlib import pylab
 import matplotlib.pyplot as plt
 
+# def extract_all_vars_sql(name):
+#     """ Reads in the file given in name and extracts all variables."""
+#
+#     db = sqlitedict.SqliteDict( name, 'openmdao' )
+#
+#     data = {}
+#     for iteration in range(len(db)):
+#         iteration_coordinate = 'SNOPT/{}'.format(iteration + 1 )
+#
+#         record = db[iteration_coordinate]
+#
+#         for key, value in record['Unknowns'].items():
+#             if key not in data:
+#                 data[key] = []
+#             data[key].append(value)
+#
+#     return data
+
 def extract_all_vars_sql(name):
-    """ Reads in the file given in name and extracts all variables."""
+    """ Reads in the file given in name and extracts final variables."""
 
     db = sqlitedict.SqliteDict( name, 'openmdao' )
 
     data = {}
-    for iteration in range(len(db)):
-        iteration_coordinate = 'SNOPT/{}'.format(iteration + 1 )
+    iteration = len(db)
+    iteration_coordinate = 'SNOPT/{}'.format(iteration)
 
-        record = db[iteration_coordinate]
+    record = db[iteration_coordinate]
 
-        for key, value in record['Unknowns'].items():
-            if key not in data:
-                data[key] = []
-            data[key].append(value)
+    for key, value in record['Unknowns'].items():
+        if key not in data:
+            data[key] = []
+        data[key].append(value)
 
     return data
 
